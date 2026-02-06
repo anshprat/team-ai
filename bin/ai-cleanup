@@ -164,3 +164,48 @@ for agent_id in "${stale_agents[@]}"; do
 done
 
 echo "Removed ${removed} stale agent(s)"
+
+# =============================================================================
+# Stale Task Auto-Unclaim
+# =============================================================================
+# Reset in_progress tasks whose assignee agent no longer exists or is stale
+TASKS_DIR="${TEAM_AI_DIR}/tasks"
+if [ -d "${TASKS_DIR}" ] && ls "${TASKS_DIR}"/*.json &>/dev/null; then
+    unclaimed=0
+    for task_file in "${TASKS_DIR}"/*.json; do
+        [ -f "${task_file}" ] || continue
+
+        if command -v python3 &> /dev/null; then
+            result=$(python3 << PYTHON
+import json
+with open('${task_file}', 'r') as f:
+    task = json.load(f)
+
+if task.get('status') != 'in_progress' or not task.get('assignee'):
+    print('skip')
+else:
+    import os
+    agent_dir = os.path.join('${TEAM_AI_DIR}', 'agents', task['assignee'], 'metadata.json')
+    if not os.path.exists(agent_dir):
+        task['status'] = 'pending'
+        task['assignee'] = None
+        task['claimed_at'] = None
+        with open('${task_file}', 'w') as f:
+            json.dump(task, f, indent=2)
+        print('unclaimed:' + task.get('title', task['id']))
+    else:
+        print('skip')
+PYTHON
+            )
+            if [[ "${result}" == unclaimed:* ]]; then
+                task_title="${result#unclaimed:}"
+                echo "  Auto-unclaimed task: ${task_title}"
+                ((unclaimed++))
+            fi
+        fi
+    done
+
+    if [ ${unclaimed} -gt 0 ]; then
+        echo "Reset ${unclaimed} stale task(s) to pending"
+    fi
+fi

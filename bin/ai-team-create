@@ -1,0 +1,131 @@
+#!/bin/bash
+# ai-team-create - Create a new team
+# Usage: ai-team-create --name "team-name" --lead AGENT_ID [OPTIONS]
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+TEAMS_DIR="${TEAM_AI_DIR}/teams"
+
+# Generate UUID
+generate_uuid() {
+    if command -v uuidgen &> /dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    elif [ -f /proc/sys/kernel/random/uuid ]; then
+        cat /proc/sys/kernel/random/uuid
+    else
+        date +%s%N | sha256sum | head -c 32
+        echo ""
+    fi
+}
+
+# Get ISO 8601 timestamp
+get_timestamp() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+show_help() {
+    cat << EOF
+Usage: ai-team-create [OPTIONS]
+
+Create a new team for coordinating agents.
+
+Options:
+  --name NAME             Team name (required)
+  --lead AGENT_ID         Lead agent ID (required)
+  --description DESC      Team description
+  -h, --help              Show this help message
+
+Output:
+  Prints the new team ID to stdout.
+
+Example:
+  TEAM_ID=\$(ai-team-create --name "auth-team" --lead \$AGENT_ID)
+EOF
+}
+
+# Parse arguments
+TEAM_NAME=""
+LEAD_ID=""
+DESCRIPTION=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --name)
+            TEAM_NAME="$2"
+            shift 2
+            ;;
+        --lead)
+            LEAD_ID="$2"
+            shift 2
+            ;;
+        --description)
+            DESCRIPTION="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "${TEAM_NAME}" ]; then
+    echo "Error: --name is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+if [ -z "${LEAD_ID}" ]; then
+    echo "Error: --lead is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+# Verify lead agent exists
+if [ ! -d "${TEAM_AI_DIR}/agents/${LEAD_ID}" ]; then
+    echo "Error: Lead agent not found: ${LEAD_ID}" >&2
+    exit 1
+fi
+
+TEAM_ID=$(generate_uuid)
+TIMESTAMP=$(get_timestamp)
+TEAM_DIR="${TEAMS_DIR}/${TEAM_ID}"
+
+mkdir -p "${TEAM_DIR}"
+
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json
+
+config = {
+    "id": "${TEAM_ID}",
+    "name": """${TEAM_NAME}""",
+    "lead": "${LEAD_ID}",
+    "members": ["${LEAD_ID}"],
+    "created_at": "${TIMESTAMP}",
+    "description": """${DESCRIPTION}"""
+}
+
+with open('${TEAM_DIR}/config.json', 'w') as f:
+    json.dump(config, f, indent=2)
+PYTHON
+else
+    cat > "${TEAM_DIR}/config.json" << EOF
+{
+  "id": "${TEAM_ID}",
+  "name": "${TEAM_NAME}",
+  "lead": "${LEAD_ID}",
+  "members": ["${LEAD_ID}"],
+  "created_at": "${TIMESTAMP}",
+  "description": "${DESCRIPTION}"
+}
+EOF
+fi
+
+echo "${TEAM_ID}"

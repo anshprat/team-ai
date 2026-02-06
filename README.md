@@ -16,6 +16,10 @@ A file-based inter-agent communication system that allows multiple AI agents to 
 - Broadcast messages to multiple agents
 - Find agents by capability
 - Attach artifacts (screenshots, plans, etc.) to messages
+- Shared task list with dependencies and claiming
+- Lightweight team management
+- Plan approval workflows
+- Delegate mode for coordination-only agents
 
 ## Installation
 
@@ -95,6 +99,32 @@ ai-deregister $AGENT_ID
 | `ai-process` | Move message from todo → wip |
 | `ai-complete` | Move message from wip → done |
 
+### Task Management
+
+| Command | Description |
+|---------|-------------|
+| `ai-task-create` | Create a new task with optional dependencies |
+| `ai-task-list` | List/filter tasks (`--available` for claimable) |
+| `ai-task-claim` | Claim a task (atomic, validates dependencies) |
+| `ai-task-complete` | Mark a task as completed |
+| `ai-task-update` | Update task fields (priority, deps, etc.) |
+
+### Team Management
+
+| Command | Description |
+|---------|-------------|
+| `ai-team-create` | Create a team with a lead agent |
+| `ai-team-list` | List teams (optionally filter by member) |
+| `ai-team-join` | Add an agent to a team |
+| `ai-team-leave` | Remove an agent from a team |
+
+### Plan Approval
+
+| Command | Description |
+|---------|-------------|
+| `ai-plan-submit` | Submit a plan for review |
+| `ai-plan-review` | Approve or reject a submitted plan |
+
 ### Watching
 
 | Command | Description |
@@ -115,6 +145,11 @@ ai-deregister $AGENT_ID
 │           ├── todo/           # Pending messages
 │           ├── wip/            # Messages being processed
 │           └── done/           # Completed messages
+├── tasks/                      # Shared task list (one JSON file per task)
+├── teams/                      # Team configs
+│   └── <team-id>/
+│       └── config.json         # Team metadata and members
+├── plans/                      # Plan approval metadata (one JSON per plan)
 ├── artifacts/                  # Shared artifacts (screenshots, plans, etc.)
 ├── integrations/               # IDE-specific integration files
 │   ├── shared/                 # Shared MCP tools library
@@ -144,6 +179,7 @@ Options:
   --model MODEL             AI model being used
   --session-id ID           Claude Code session ID
   --parent AGENT_ID         Parent agent ID
+  --role ROLE               Agent role: worker|lead|delegate (default: worker)
 
 # Returns the new agent ID
 ```
@@ -169,6 +205,7 @@ Options:
   -p, --progress PERCENT    Update progress (0-100)
   --files FILES             Comma-separated files in progress
   --git-branch BRANCH       Update git branch
+  --role ROLE               Update role: worker|lead|delegate
 ```
 
 ### ai-list
@@ -264,7 +301,7 @@ ai-watch-stop
 
 ### ai-cleanup
 
-Remove stale agents.
+Remove stale agents and unclaim orphaned tasks.
 
 ```bash
 ai-cleanup [options]
@@ -273,6 +310,119 @@ Options:
   -t, --threshold SECONDS  Stale threshold (default: 3600)
   -n, --dry-run           Show what would be removed
   -f, --force             Remove without confirmation
+```
+
+### ai-task-create
+
+Create a new task.
+
+```bash
+ai-task-create --title "Task title" [options]
+
+Options:
+  --title TITLE               Task title (required)
+  --description DESC          Task description
+  --priority PRIORITY         Priority: low|normal|high (default: normal)
+  --depends-on ID1,ID2        Comma-separated dependency task IDs
+  --tags TAG1,TAG2            Comma-separated tags
+  --team TEAM_ID              Associated team
+  --created-by AGENT_ID       Creator agent ID
+```
+
+### ai-task-list
+
+List and filter tasks.
+
+```bash
+ai-task-list [options]
+
+Options:
+  --status STATUS            Filter by status (pending|in_progress|completed|blocked)
+  --available                Show only claimable tasks (pending + deps met)
+  --assignee AGENT_ID        Filter by assignee
+  --team TEAM_ID             Filter by team
+  --tag TAG                  Filter by tag
+  -j, --json                 Output as JSON
+```
+
+### ai-task-claim
+
+Claim a task (atomic with dependency validation).
+
+```bash
+ai-task-claim TASK_ID --agent AGENT_ID
+```
+
+### ai-task-complete
+
+Complete a task.
+
+```bash
+ai-task-complete TASK_ID [--result "Summary of work done"]
+```
+
+### ai-task-update
+
+Update task fields.
+
+```bash
+ai-task-update TASK_ID [options]
+
+Options:
+  --title TITLE              Update title
+  --status STATUS            Update status
+  --priority PRIORITY        Update priority
+  --add-dep TASK_ID          Add dependency
+  --remove-dep TASK_ID       Remove dependency
+```
+
+### ai-team-create
+
+Create a team.
+
+```bash
+ai-team-create --name "team-name" --lead AGENT_ID [--description "..."]
+```
+
+### ai-team-list
+
+List teams.
+
+```bash
+ai-team-list [--agent AGENT_ID] [-j]
+```
+
+### ai-team-join
+
+Join a team.
+
+```bash
+ai-team-join TEAM_ID --agent AGENT_ID
+```
+
+### ai-team-leave
+
+Leave a team.
+
+```bash
+ai-team-leave TEAM_ID --agent AGENT_ID
+```
+
+### ai-plan-submit
+
+Submit a plan for approval.
+
+```bash
+ai-plan-submit --title "Plan title" --file plan.md --reviewer AGENT_ID [--from AGENT_ID]
+```
+
+### ai-plan-review
+
+Approve or reject a plan.
+
+```bash
+ai-plan-review PLAN_ID --action approve
+ai-plan-review PLAN_ID --action reject --feedback "Needs test coverage"
 ```
 
 ## MCP Tools (Cursor, VSCode, Antigravity)
@@ -289,6 +439,18 @@ The MCP server integrations provide the following tools:
 | `team-ai-agents-by-capability` | Find agents with specific capabilities |
 | `team-ai-broadcast` | Send message to multiple agents |
 | `team-ai-watch-start` | Start watching for incoming messages |
+| `team-ai-task-create` | Create a new task |
+| `team-ai-task-list` | List/filter tasks |
+| `team-ai-task-claim` | Claim a task |
+| `team-ai-task-complete` | Complete a task |
+| `team-ai-task-update` | Update task fields |
+| `team-ai-team-create` | Create a team |
+| `team-ai-team-list` | List teams |
+| `team-ai-team-join` | Join a team |
+| `team-ai-team-leave` | Leave a team |
+| `team-ai-plan-submit` | Submit a plan for review |
+| `team-ai-plan-review` | Approve or reject a plan |
+| `team-ai-plan-list` | List all plans |
 
 ### Setting up Google Antigravity
 

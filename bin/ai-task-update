@@ -1,0 +1,233 @@
+#!/bin/bash
+# ai-task-update - Update fields on an existing task
+# Usage: ai-task-update TASK_ID [OPTIONS]
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+TASKS_DIR="${TEAM_AI_DIR}/tasks"
+
+show_help() {
+    cat << EOF
+Usage: ai-task-update TASK_ID [OPTIONS]
+
+Update fields on an existing task.
+
+Arguments:
+  TASK_ID                 The ID of the task to update
+
+Options:
+  --title TITLE           Update title
+  --description DESC      Update description
+  --status STATUS         Update status: pending|in_progress|completed|blocked
+  --assignee AGENT_ID     Reassign task (use "none" to unassign)
+  --priority PRIORITY     Update priority: low|normal|high
+  --add-dep TASK_ID       Add a dependency
+  --remove-dep TASK_ID    Remove a dependency
+  --team TEAM_ID          Set team (use "none" to unset)
+  -h, --help              Show this help message
+
+Example:
+  ai-task-update abc123 --priority high --title "Updated title"
+  ai-task-update abc123 --add-dep def456
+  ai-task-update abc123 --assignee none --status pending
+EOF
+}
+
+# Parse arguments
+TASK_ID=""
+NEW_TITLE=""
+NEW_DESCRIPTION=""
+NEW_STATUS=""
+NEW_ASSIGNEE=""
+NEW_PRIORITY=""
+ADD_DEP=""
+REMOVE_DEP=""
+NEW_TEAM=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --title)
+            NEW_TITLE="$2"
+            shift 2
+            ;;
+        --description)
+            NEW_DESCRIPTION="$2"
+            shift 2
+            ;;
+        --status)
+            NEW_STATUS="$2"
+            shift 2
+            ;;
+        --assignee)
+            NEW_ASSIGNEE="$2"
+            shift 2
+            ;;
+        --priority)
+            NEW_PRIORITY="$2"
+            shift 2
+            ;;
+        --add-dep)
+            ADD_DEP="$2"
+            shift 2
+            ;;
+        --remove-dep)
+            REMOVE_DEP="$2"
+            shift 2
+            ;;
+        --team)
+            NEW_TEAM="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+        *)
+            TASK_ID="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ -z "${TASK_ID}" ]; then
+    echo "Error: TASK_ID is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+TASK_FILE="${TASKS_DIR}/${TASK_ID}.json"
+
+if [ ! -f "${TASK_FILE}" ]; then
+    echo "Error: Task not found: ${TASK_ID}" >&2
+    exit 1
+fi
+
+# Validate add-dep exists
+if [ -n "${ADD_DEP}" ] && [ ! -f "${TASKS_DIR}/${ADD_DEP}.json" ]; then
+    echo "Error: Dependency task not found: ${ADD_DEP}" >&2
+    exit 1
+fi
+
+# Lock for update
+LOCK_DIR="${TASKS_DIR}/.${TASK_ID}.update.lock"
+
+acquire_lock() {
+    local max_attempts=50
+    local attempt=0
+    while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
+        attempt=$((attempt + 1))
+        if [ ${attempt} -ge ${max_attempts} ]; then
+            echo "Error: Could not acquire lock on task ${TASK_ID}" >&2
+            exit 1
+        fi
+        sleep 0.1
+    done
+}
+
+release_lock() {
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+
+trap release_lock EXIT
+acquire_lock
+
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json, sys
+
+with open('${TASK_FILE}', 'r') as f:
+    task = json.load(f)
+
+updates = []
+
+title = """${NEW_TITLE}"""
+if title:
+    task['title'] = title
+    updates.append(f'title="{title}"')
+
+description = """${NEW_DESCRIPTION}"""
+if description:
+    task['description'] = description
+    updates.append('description updated')
+
+status = '${NEW_STATUS}'
+if status:
+    task['status'] = status
+    updates.append(f'status={status}')
+
+assignee = '${NEW_ASSIGNEE}'
+if assignee:
+    if assignee == 'none':
+        task['assignee'] = None
+        updates.append('assignee cleared')
+    else:
+        task['assignee'] = assignee
+        updates.append(f'assignee={assignee}')
+
+priority = '${NEW_PRIORITY}'
+if priority:
+    task['priority'] = priority
+    updates.append(f'priority={priority}')
+
+team = '${NEW_TEAM}'
+if team:
+    if team == 'none':
+        task['team_id'] = None
+        updates.append('team cleared')
+    else:
+        task['team_id'] = team
+        updates.append(f'team={team}')
+
+add_dep = '${ADD_DEP}'
+if add_dep:
+    deps = task.get('depends_on', [])
+    if add_dep not in deps:
+        # Cycle detection
+        tasks_dir = '${TASKS_DIR}'
+        visited = set()
+        stack = [add_dep]
+        while stack:
+            current = stack.pop()
+            if current == '${TASK_ID}':
+                print("Error: Adding this dependency would create a cycle", file=sys.stderr)
+                sys.exit(1)
+            if current in visited:
+                continue
+            visited.add(current)
+            try:
+                with open(f'{tasks_dir}/{current}.json', 'r') as f:
+                    t = json.load(f)
+                    stack.extend(t.get('depends_on', []))
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+        deps.append(add_dep)
+        task['depends_on'] = deps
+        updates.append(f'added dep {add_dep[:8]}')
+
+remove_dep = '${REMOVE_DEP}'
+if remove_dep:
+    deps = task.get('depends_on', [])
+    if remove_dep in deps:
+        deps.remove(remove_dep)
+        task['depends_on'] = deps
+        updates.append(f'removed dep {remove_dep[:8]}')
+
+if not updates:
+    print("No updates specified")
+    sys.exit(0)
+
+with open('${TASK_FILE}', 'w') as f:
+    json.dump(task, f, indent=2)
+
+print('Updated: ' + ', '.join(updates))
+PYTHON
+else
+    echo "Error: python3 required for task updates" >&2
+    exit 1
+fi

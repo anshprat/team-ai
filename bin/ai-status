@@ -26,6 +26,7 @@ Options:
   -p, --progress PERCENT    Update progress_percent (0-100)
   --files FILES             Update files_in_progress (comma-separated)
   --git-branch BRANCH       Update git_branch
+  --role ROLE               Update role: worker|lead|delegate
   -h, --help                Show this help message
 
 Example:
@@ -41,6 +42,7 @@ TASK=""
 PROGRESS=""
 FILES=""
 GIT_BRANCH=""
+ROLE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -62,6 +64,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --git-branch)
             GIT_BRANCH="$2"
+            shift 2
+            ;;
+        --role)
+            ROLE="$2"
             shift 2
             ;;
         -h|--help)
@@ -115,6 +121,7 @@ task = '${TASK}'
 progress = '${PROGRESS}'
 files = '${FILES}'
 git_branch = '${GIT_BRANCH}'
+role = '${ROLE}'
 
 if state:
     metadata['state'] = state
@@ -126,6 +133,8 @@ if files:
     metadata['files_in_progress'] = [f.strip() for f in files.split(',') if f.strip()]
 if git_branch:
     metadata['git_branch'] = git_branch
+if role:
+    metadata['role'] = role
 
 with open('${METADATA_FILE}', 'w') as f:
     json.dump(metadata, f, indent=2)
@@ -142,6 +151,8 @@ if files:
     updates.append(f'files={files}')
 if git_branch:
     updates.append(f'git_branch={git_branch}')
+if role:
+    updates.append(f'role={role}')
 
 if updates:
     print('Updated: ' + ', '.join(updates))

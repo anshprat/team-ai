@@ -1,0 +1,204 @@
+#!/bin/bash
+# ai-plan-submit - Submit a plan for approval
+# Usage: ai-plan-submit --title "Plan title" --file plan.md --reviewer AGENT_ID
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+PLANS_DIR="${TEAM_AI_DIR}/plans"
+ARTIFACTS_DIR="${TEAM_AI_DIR}/artifacts"
+
+# Generate UUID
+generate_uuid() {
+    if command -v uuidgen &> /dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    elif [ -f /proc/sys/kernel/random/uuid ]; then
+        cat /proc/sys/kernel/random/uuid
+    else
+        date +%s%N | sha256sum | head -c 32
+        echo ""
+    fi
+}
+
+# Get ISO 8601 timestamp
+get_timestamp() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+show_help() {
+    cat << EOF
+Usage: ai-plan-submit [OPTIONS]
+
+Submit a plan for approval by another agent.
+
+Options:
+  --title TITLE           Plan title (required)
+  --file FILE             Plan file path, Markdown (required unless --body used)
+  --body TEXT             Plan content inline (alternative to --file)
+  --reviewer AGENT_ID     Reviewer agent ID (required)
+  --from AGENT_ID         Submitting agent ID
+  --team TEAM_ID          Associated team
+  -h, --help              Show this help message
+
+Output:
+  Prints the plan ID to stdout.
+
+Example:
+  PLAN_ID=\$(ai-plan-submit --title "Auth refactor" --file plan.md --reviewer abc123)
+EOF
+}
+
+TITLE=""
+PLAN_FILE=""
+PLAN_BODY=""
+REVIEWER=""
+FROM_ID=""
+TEAM_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --title)
+            TITLE="$2"
+            shift 2
+            ;;
+        --file)
+            PLAN_FILE="$2"
+            shift 2
+            ;;
+        --body)
+            PLAN_BODY="$2"
+            shift 2
+            ;;
+        --reviewer)
+            REVIEWER="$2"
+            shift 2
+            ;;
+        --from)
+            FROM_ID="$2"
+            shift 2
+            ;;
+        --team)
+            TEAM_ID="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "${TITLE}" ]; then
+    echo "Error: --title is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+if [ -z "${PLAN_FILE}" ] && [ -z "${PLAN_BODY}" ]; then
+    echo "Error: --file or --body is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+if [ -z "${REVIEWER}" ]; then
+    echo "Error: --reviewer is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+if [ -n "${PLAN_FILE}" ] && [ ! -f "${PLAN_FILE}" ]; then
+    echo "Error: Plan file not found: ${PLAN_FILE}" >&2
+    exit 1
+fi
+
+# Verify reviewer exists
+if [ ! -d "${TEAM_AI_DIR}/agents/${REVIEWER}" ]; then
+    echo "Error: Reviewer agent not found: ${REVIEWER}" >&2
+    exit 1
+fi
+
+mkdir -p "${PLANS_DIR}"
+mkdir -p "${ARTIFACTS_DIR}"
+
+PLAN_ID=$(generate_uuid)
+TIMESTAMP=$(get_timestamp)
+ARTIFACT_PATH="${ARTIFACTS_DIR}/${PLAN_ID}.md"
+
+# Copy plan content to artifacts
+if [ -n "${PLAN_FILE}" ]; then
+    cp "${PLAN_FILE}" "${ARTIFACT_PATH}"
+else
+    echo "${PLAN_BODY}" > "${ARTIFACT_PATH}"
+fi
+
+# Create plan metadata
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json
+
+plan = {
+    "id": "${PLAN_ID}",
+    "title": """${TITLE}""",
+    "artifact_path": "${ARTIFACT_PATH}",
+    "submitted_by": "${FROM_ID}" if "${FROM_ID}" else None,
+    "submitted_at": "${TIMESTAMP}",
+    "reviewer": "${REVIEWER}",
+    "status": "pending",
+    "reviewed_at": None,
+    "feedback": None,
+    "team_id": "${TEAM_ID}" if "${TEAM_ID}" else None
+}
+
+with open('${PLANS_DIR}/${PLAN_ID}.json', 'w') as f:
+    json.dump(plan, f, indent=2)
+PYTHON
+else
+    FROM_JSON="null"
+    [ -n "${FROM_ID}" ] && FROM_JSON="\"${FROM_ID}\""
+    TEAM_JSON="null"
+    [ -n "${TEAM_ID}" ] && TEAM_JSON="\"${TEAM_ID}\""
+
+    cat > "${PLANS_DIR}/${PLAN_ID}.json" << EOF
+{
+  "id": "${PLAN_ID}",
+  "title": "${TITLE}",
+  "artifact_path": "${ARTIFACT_PATH}",
+  "submitted_by": ${FROM_JSON},
+  "submitted_at": "${TIMESTAMP}",
+  "reviewer": "${REVIEWER}",
+  "status": "pending",
+  "reviewed_at": null,
+  "feedback": null,
+  "team_id": ${TEAM_JSON}
+}
+EOF
+fi
+
+# Notify reviewer via ai-send
+PLAN_CONTENT=""
+if [ -f "${ARTIFACT_PATH}" ]; then
+    PLAN_CONTENT=$(head -c 500 "${ARTIFACT_PATH}")
+fi
+
+ai-send "${REVIEWER}" \
+    --subject "Plan Approval: ${TITLE}" \
+    --body "A plan has been submitted for your review.
+
+Plan ID: ${PLAN_ID}
+Title: ${TITLE}
+Artifact: ${ARTIFACT_PATH}
+
+Preview:
+${PLAN_CONTENT}
+
+Use 'ai-plan-review ${PLAN_ID} --action approve' or 'ai-plan-review ${PLAN_ID} --action reject --feedback \"reason\"' to review." \
+    --type request \
+    --priority high \
+    ${FROM_ID:+--from "${FROM_ID}"} >/dev/null 2>&1 || true
+
+echo "${PLAN_ID}"

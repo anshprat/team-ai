@@ -16,12 +16,13 @@ Both aim to solve multi-agent coordination, but they differ significantly in sco
 | **Transport** | Filesystem + MCP (stdio) + CLI | In-process or tmux split panes |
 | **Agent discovery** | Registry-based (`registry.json`) | Team config file (`~/.claude/teams/`) |
 | **Message format** | YAML frontmatter + Markdown body | Internal Claude Code messaging |
-| **Task management** | Per-agent message queues (todo/wip/done) | Shared task list with dependencies |
+| **Task management** | Shared task list with dependencies + per-agent message queues | Shared task list with dependencies |
 | **Shared artifacts** | Yes (screenshots, plans, documents) | No dedicated artifact system |
 | **Heartbeat/liveness** | Yes (automatic, configurable threshold) | No (relies on process lifecycle) |
 | **Broadcast messaging** | Yes (with tag/capability filtering) | Yes (to all teammates) |
-| **Plan approval workflow** | No | Yes (read-only plan mode until lead approves) |
-| **Delegate mode** | No | Yes (restricts lead to coordination-only) |
+| **Plan approval workflow** | Yes (submit/review with notifications) | Yes (read-only plan mode until lead approves) |
+| **Delegate mode** | Yes (advisory role field: worker/lead/delegate) | Yes (restricts lead to coordination-only) |
+| **Team concept** | Yes (lightweight teams with lead + members) | Yes (lead-teammate hierarchy) |
 | **Session resumption** | Agents persist across sessions via filesystem | Limited (in-process teammates not restored on `/resume`) |
 | **Nested coordination** | Flat peer network (any agent can message any other) | No nesting (only lead manages team) |
 | **Dependencies** | Bash (core), Node.js (MCP only) | Claude Code CLI |
@@ -36,12 +37,16 @@ Both aim to solve multi-agent coordination, but they differ significantly in sco
 ~/.team-ai/
   agents/
     {uuid}/
-      metadata.json       # Agent info (name, state, capabilities, git branch)
+      metadata.json       # Agent info (name, state, capabilities, role, git branch)
       incoming/
         todo/             # Pending messages
         wip/              # In-progress messages
         done/             # Completed messages
-  artifacts/              # Shared files
+  tasks/                  # Shared task list with dependencies
+  teams/{team-id}/
+    config.json           # Team metadata and members
+  plans/                  # Plan approval metadata
+  artifacts/              # Shared files (including plan content)
   registry.json           # Agent index
 ```
 
@@ -76,11 +81,11 @@ Both aim to solve multi-agent coordination, but they differ significantly in sco
 
 ### Use Claude Agent Teams When
 
-- **Deep Claude Code collaboration**: All agents are Claude Code sessions and need tight coordination with shared task lists and dependency tracking.
+- **Deep Claude Code collaboration**: All agents are Claude Code sessions and need tight coordination with automatic process management.
 - **Structured team workflows**: You want a lead to assign tasks, approve plans, and synthesize results from multiple parallel workers.
 - **Parallel exploration**: Multiple agents need to investigate competing hypotheses, review from different angles, or build independent modules simultaneously.
 - **Interactive steering**: You want to message individual teammates directly, redirect approaches in real-time, and have the lead orchestrate.
-- **Built-in task dependencies**: Tasks have ordering constraints (A must finish before B can start).
+- **Automatic teammate lifecycle**: Teammates are spawned and shut down automatically by the lead.
 
 ### Complementary Use
 
@@ -135,11 +140,10 @@ The two systems are **not mutually exclusive**. A practical setup could use:
 
 ### Team AI Limitations
 - No built-in authentication or encryption
-- No task dependency management
-- No plan approval workflows
 - Requires per-IDE setup and configuration
 - Filesystem I/O bound (no pagination on large registries)
-- No structured team hierarchy or delegation modes
+- Delegate mode is advisory (convention-based, not enforced)
+- No automatic teammate spawning/shutdown (agents are manually registered)
 
 ### Claude Agent Teams Limitations
 - Experimental; disabled by default
@@ -156,9 +160,9 @@ The two systems are **not mutually exclusive**. A practical setup could use:
 
 | Dimension | Team AI | Claude Agent Teams |
 |---|---|---|
-| **Strength** | Cross-tool, lightweight, persistent | Deep coordination, structured workflows |
-| **Weakness** | No task orchestration, manual coordination | Claude Code only, high token cost |
-| **Best for** | Multi-IDE awareness and loose coordination | Focused parallel work within Claude Code |
+| **Strength** | Cross-tool, lightweight, persistent, full task/team/plan support | Deep coordination, automatic process management |
+| **Weakness** | Advisory enforcement, manual agent lifecycle | Claude Code only, high token cost |
+| **Best for** | Multi-IDE coordination with structured workflows | Focused parallel work within Claude Code |
 | **Philosophy** | Universal message bus for any AI tool | First-party team orchestration for Claude Code |
 
-Both projects address the growing need for multi-agent coordination in AI-assisted development. Team AI takes a tool-agnostic, infrastructure approach (the "message bus"), while Claude Agent Teams takes an opinionated, workflow-oriented approach (the "team manager"). As the multi-agent ecosystem matures, the ideal setup may well involve both.
+Both projects address the growing need for multi-agent coordination in AI-assisted development. Team AI takes a tool-agnostic, infrastructure approach (the "message bus") with shared tasks, teams, plan approval, and delegate roles, while Claude Agent Teams takes an opinionated, workflow-oriented approach (the "team manager") with automatic process lifecycle management. The primary remaining differentiation is cross-tool support (Team AI) vs. native process orchestration (Claude Agent Teams). As the multi-agent ecosystem matures, the ideal setup may well involve both.

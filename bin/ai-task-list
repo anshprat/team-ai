@@ -1,0 +1,180 @@
+#!/bin/bash
+# ai-task-list - List tasks in the shared task list
+# Usage: ai-task-list [OPTIONS]
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+TASKS_DIR="${TEAM_AI_DIR}/tasks"
+
+show_help() {
+    cat << EOF
+Usage: ai-task-list [OPTIONS]
+
+List tasks in the shared task list.
+
+Options:
+  --status STATUS         Filter by status: pending|in_progress|completed|blocked
+  --assignee AGENT_ID     Filter by assignee
+  --available             Show only claimable tasks (pending + all deps completed)
+  --team TEAM_ID          Filter by team
+  --tag TAG               Filter by tag
+  -j, --json              JSON output
+  -h, --help              Show this help message
+
+Examples:
+  ai-task-list                        # List all tasks
+  ai-task-list --available            # Show claimable tasks
+  ai-task-list --status in_progress   # Show in-progress tasks
+  ai-task-list --team TEAM_ID         # Show tasks for a team
+EOF
+}
+
+# Parse arguments
+STATUS_FILTER=""
+ASSIGNEE_FILTER=""
+AVAILABLE=false
+TEAM_FILTER=""
+TAG_FILTER=""
+JSON_OUTPUT=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --status)
+            STATUS_FILTER="$2"
+            shift 2
+            ;;
+        --assignee)
+            ASSIGNEE_FILTER="$2"
+            shift 2
+            ;;
+        --available)
+            AVAILABLE=true
+            shift
+            ;;
+        --team)
+            TEAM_FILTER="$2"
+            shift 2
+            ;;
+        --tag)
+            TAG_FILTER="$2"
+            shift 2
+            ;;
+        -j|--json)
+            JSON_OUTPUT=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Check tasks directory exists
+if [ ! -d "${TASKS_DIR}" ] || [ -z "$(ls -A "${TASKS_DIR}"/*.json 2>/dev/null)" ]; then
+    if [ "${JSON_OUTPUT}" = true ]; then
+        echo "[]"
+    else
+        echo "No tasks found"
+    fi
+    exit 0
+fi
+
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json, os, sys
+
+tasks_dir = '${TASKS_DIR}'
+status_filter = '${STATUS_FILTER}'
+assignee_filter = '${ASSIGNEE_FILTER}'
+available = '${AVAILABLE}' == 'true'
+team_filter = '${TEAM_FILTER}'
+tag_filter = '${TAG_FILTER}'
+json_output = '${JSON_OUTPUT}' == 'true'
+
+tasks = []
+for filename in sorted(os.listdir(tasks_dir)):
+    if not filename.endswith('.json'):
+        continue
+    filepath = os.path.join(tasks_dir, filename)
+    try:
+        with open(filepath, 'r') as f:
+            task = json.load(f)
+        tasks.append(task)
+    except (json.JSONDecodeError, IOError):
+        continue
+
+# Apply filters
+filtered = []
+for task in tasks:
+    if status_filter and task.get('status') != status_filter:
+        continue
+    if assignee_filter and task.get('assignee') != assignee_filter:
+        continue
+    if team_filter and task.get('team_id') != team_filter:
+        continue
+    if tag_filter and tag_filter not in task.get('tags', []):
+        continue
+    if available:
+        if task.get('status') != 'pending':
+            continue
+        # Check all dependencies are completed
+        deps_met = True
+        for dep_id in task.get('depends_on', []):
+            dep_path = os.path.join(tasks_dir, f'{dep_id}.json')
+            try:
+                with open(dep_path, 'r') as f:
+                    dep = json.load(f)
+                if dep.get('status') != 'completed':
+                    deps_met = False
+                    break
+            except (FileNotFoundError, json.JSONDecodeError):
+                deps_met = False
+                break
+        if not deps_met:
+            continue
+    filtered.append(task)
+
+if json_output:
+    print(json.dumps(filtered, indent=2))
+else:
+    if not filtered:
+        print("No tasks match the criteria")
+        sys.exit(0)
+
+    # Print table header
+    print(f"{'ID':38s} {'STATUS':13s} {'PRIORITY':10s} {'ASSIGNEE':12s} {'TITLE'}")
+    print('-' * 110)
+    for task in filtered:
+        tid = task.get('id', '')[:36]
+        status = task.get('status', 'pending')
+        priority = task.get('priority', 'normal')
+        assignee = (task.get('assignee') or '-')[:10]
+        title = task.get('title', '')[:45]
+        deps = task.get('depends_on', [])
+        dep_str = f' [{len(deps)} dep(s)]' if deps else ''
+        print(f"{tid:38s} {status:13s} {priority:10s} {assignee:12s} {title}{dep_str}")
+PYTHON
+else
+    # Bash fallback - simple list
+    printf "%-38s %-13s %-10s %s\n" "ID" "STATUS" "PRIORITY" "TITLE"
+    printf '%0.s-' {1..100}; echo
+    for task_file in "${TASKS_DIR}"/*.json; do
+        [ -f "${task_file}" ] || continue
+        id=$(grep -o '"id": "[^"]*"' "${task_file}" | head -1 | cut -d'"' -f4)
+        status=$(grep -o '"status": "[^"]*"' "${task_file}" | head -1 | cut -d'"' -f4)
+        priority=$(grep -o '"priority": "[^"]*"' "${task_file}" | head -1 | cut -d'"' -f4)
+        title=$(grep -o '"title": "[^"]*"' "${task_file}" | head -1 | cut -d'"' -f4)
+
+        if [ -n "${STATUS_FILTER}" ] && [ "${status}" != "${STATUS_FILTER}" ]; then
+            continue
+        fi
+        printf "%-38s %-13s %-10s %s\n" "${id:0:36}" "${status}" "${priority}" "${title:0:45}"
+    done
+fi

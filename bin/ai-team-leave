@@ -1,0 +1,121 @@
+#!/bin/bash
+# ai-team-leave - Leave a team
+# Usage: ai-team-leave TEAM_ID --agent AGENT_ID
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+TEAMS_DIR="${TEAM_AI_DIR}/teams"
+
+show_help() {
+    cat << EOF
+Usage: ai-team-leave TEAM_ID [OPTIONS]
+
+Leave a team.
+
+Arguments:
+  TEAM_ID               The ID of the team to leave
+
+Options:
+  --agent AGENT_ID      The agent leaving the team (required)
+  -h, --help            Show this help message
+
+Example:
+  ai-team-leave abc123 --agent def456
+EOF
+}
+
+TEAM_ID=""
+AGENT_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --agent)
+            AGENT_ID="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+        *)
+            TEAM_ID="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ -z "${TEAM_ID}" ]; then
+    echo "Error: TEAM_ID is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+if [ -z "${AGENT_ID}" ]; then
+    echo "Error: --agent is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+CONFIG_FILE="${TEAMS_DIR}/${TEAM_ID}/config.json"
+
+if [ ! -f "${CONFIG_FILE}" ]; then
+    echo "Error: Team not found: ${TEAM_ID}" >&2
+    exit 1
+fi
+
+# Lock for team config update
+LOCK_DIR="${TEAMS_DIR}/${TEAM_ID}/.config.lock"
+
+acquire_lock() {
+    local max_attempts=50
+    local attempt=0
+    while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
+        attempt=$((attempt + 1))
+        if [ ${attempt} -ge ${max_attempts} ]; then
+            echo "Error: Could not acquire lock" >&2
+            exit 1
+        fi
+        sleep 0.1
+    done
+}
+
+release_lock() {
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+
+trap release_lock EXIT
+acquire_lock
+
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json
+
+with open('${CONFIG_FILE}', 'r') as f:
+    config = json.load(f)
+
+members = config.get('members', [])
+if '${AGENT_ID}' not in members:
+    print("Agent is not a member of this team")
+else:
+    members.remove('${AGENT_ID}')
+    config['members'] = members
+    # If the leaving agent was lead, reassign to first remaining member
+    if config.get('lead') == '${AGENT_ID}' and members:
+        config['lead'] = members[0]
+        print(f"Lead reassigned to {members[0]}")
+    elif config.get('lead') == '${AGENT_ID}':
+        config['lead'] = None
+    with open('${CONFIG_FILE}', 'w') as f:
+        json.dump(config, f, indent=2)
+    print(f"Left team: {config.get('name', '${TEAM_ID}')}")
+PYTHON
+else
+    echo "Error: python3 required for team operations" >&2
+    exit 1
+fi

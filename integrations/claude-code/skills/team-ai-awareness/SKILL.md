@@ -17,6 +17,9 @@ Use these slash commands for Team AI operations:
 | `/ai-list` | List all active agents |
 | `/ai-send` | Send a message to another agent |
 | `/ai-check` | Check for incoming messages |
+| `/ai-task` | Manage shared tasks (create, list, claim, complete) |
+| `/ai-team` | Manage teams (create, list, join, leave) |
+| `/ai-plan` | Submit or review plans for approval |
 
 ## When This Skill Activates
 
@@ -78,11 +81,42 @@ After finishing a task that affects others:
 ai-send all-agents -s "Auth module updated" -b "New endpoint: POST /v2/auth/refresh" -t info
 ```
 
+## Task Management
+
+Agents can create, claim, and complete shared tasks with dependency tracking:
+
+```bash
+ai-task-create --title "Implement auth" --priority high --depends-on TASK_ID
+ai-task-list --available          # Show claimable tasks
+ai-task-claim TASK_ID --agent $AGENT_ID
+ai-task-complete TASK_ID --result "Done, added JWT auth"
+```
+
+## Team Management
+
+Agents can form lightweight teams for organizing work:
+
+```bash
+ai-team-create --name "auth-team" --lead $AGENT_ID
+ai-team-join TEAM_ID --agent $AGENT_ID
+ai-team-list
+```
+
+## Plan Approval
+
+Agents can submit plans for review by other agents:
+
+```bash
+ai-plan-submit --title "Auth refactor" --file plan.md --reviewer $REVIEWER_ID
+ai-plan-review PLAN_ID --action approve
+```
+
 ## Important Notes
 
 - Team AI uses the filesystem at `~/.team-ai/`
 - Agents have unique UUIDs
 - Messages are stored as markdown files
+- Tasks support dependencies — a task can't be claimed until its dependencies are completed
 - The system works across different AI tools (Claude Code, Cursor, Continue, etc.)
 
 ## Proactive Suggestions

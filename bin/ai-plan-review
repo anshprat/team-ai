@@ -1,0 +1,162 @@
+#!/bin/bash
+# ai-plan-review - Approve or reject a submitted plan
+# Usage: ai-plan-review PLAN_ID --action approve|reject [OPTIONS]
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+PLANS_DIR="${TEAM_AI_DIR}/plans"
+
+# Get ISO 8601 timestamp
+get_timestamp() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+show_help() {
+    cat << EOF
+Usage: ai-plan-review PLAN_ID [OPTIONS]
+
+Approve or reject a submitted plan.
+
+Arguments:
+  PLAN_ID               The ID of the plan to review
+
+Options:
+  --action ACTION       approve or reject (required)
+  --feedback TEXT       Review feedback
+  -h, --help           Show this help message
+
+Examples:
+  ai-plan-review abc123 --action approve
+  ai-plan-review abc123 --action reject --feedback "Needs more test coverage"
+EOF
+}
+
+PLAN_ID=""
+ACTION=""
+FEEDBACK=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --action)
+            ACTION="$2"
+            shift 2
+            ;;
+        --feedback)
+            FEEDBACK="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+        *)
+            PLAN_ID="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ -z "${PLAN_ID}" ]; then
+    echo "Error: PLAN_ID is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+if [ -z "${ACTION}" ]; then
+    echo "Error: --action is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+case "${ACTION}" in
+    approve|reject) ;;
+    *)
+        echo "Error: --action must be 'approve' or 'reject'" >&2
+        exit 1
+        ;;
+esac
+
+PLAN_FILE="${PLANS_DIR}/${PLAN_ID}.json"
+
+if [ ! -f "${PLAN_FILE}" ]; then
+    echo "Error: Plan not found: ${PLAN_ID}" >&2
+    exit 1
+fi
+
+TIMESTAMP=$(get_timestamp)
+
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json, sys
+
+with open('${PLAN_FILE}', 'r') as f:
+    plan = json.load(f)
+
+if plan['status'] != 'pending':
+    print(f"Error: Plan is already '{plan['status']}'", file=sys.stderr)
+    sys.exit(1)
+
+action = '${ACTION}'
+plan['status'] = 'approved' if action == 'approve' else 'rejected'
+plan['reviewed_at'] = '${TIMESTAMP}'
+feedback = """${FEEDBACK}"""
+if feedback:
+    plan['feedback'] = feedback
+
+with open('${PLAN_FILE}', 'w') as f:
+    json.dump(plan, f, indent=2)
+
+print(f"Plan {plan['status']}: {plan['title']}")
+
+# Submitter notification handled below via separate python3 call
+PYTHON
+
+    # Notify submitter if possible
+    NOTIFY_LINE=$(python3 -c "
+import json
+with open('${PLAN_FILE}', 'r') as f:
+    p = json.load(f)
+s = p.get('submitted_by', '')
+if s:
+    print(f\"{s}|{p['title']}|{p['status']}\")
+" 2>/dev/null || true)
+
+    if [ -n "${NOTIFY_LINE}" ]; then
+        SUBMITTER=$(echo "${NOTIFY_LINE}" | cut -d'|' -f1)
+        PLAN_TITLE=$(echo "${NOTIFY_LINE}" | cut -d'|' -f2)
+        PLAN_STATUS=$(echo "${NOTIFY_LINE}" | cut -d'|' -f3)
+
+        NOTIFY_BODY="Your plan '${PLAN_TITLE}' has been ${PLAN_STATUS}."
+        [ -n "${FEEDBACK}" ] && NOTIFY_BODY="${NOTIFY_BODY}
+
+Feedback: ${FEEDBACK}"
+
+        ai-send "${SUBMITTER}" \
+            --subject "Plan ${PLAN_STATUS}: ${PLAN_TITLE}" \
+            --body "${NOTIFY_BODY}" \
+            --type info >/dev/null 2>&1 || true
+    fi
+else
+    status=$(grep -o '"status": "[^"]*"' "${PLAN_FILE}" | head -1 | cut -d'"' -f4)
+    if [ "${status}" != "pending" ]; then
+        echo "Error: Plan is already '${status}'" >&2
+        exit 1
+    fi
+
+    TMP_FILE=$(mktemp)
+    if [ "${ACTION}" = "approve" ]; then
+        sed "s/\"status\": \"pending\"/\"status\": \"approved\"/" "${PLAN_FILE}" | \
+        sed "s/\"reviewed_at\": null/\"reviewed_at\": \"${TIMESTAMP}\"/" > "${TMP_FILE}"
+    else
+        sed "s/\"status\": \"pending\"/\"status\": \"rejected\"/" "${PLAN_FILE}" | \
+        sed "s/\"reviewed_at\": null/\"reviewed_at\": \"${TIMESTAMP}\"/" > "${TMP_FILE}"
+    fi
+    mv "${TMP_FILE}" "${PLAN_FILE}"
+    echo "Plan ${ACTION}d"
+fi

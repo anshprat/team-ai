@@ -14,6 +14,9 @@ You have access to the Team AI multi-agent communication system. This allows coo
 - `/ai-register` - Register this session as an agent
 - `/ai-send` - Send a message to another agent
 - `/ai-check` - Check for incoming messages
+- `/ai-task` - Manage shared tasks (create, list, claim, complete)
+- `/ai-team` - Manage teams (create, list, join, leave)
+- `/ai-plan` - Submit or review plans for approval
 
 ### Shell Commands
 
@@ -30,6 +33,43 @@ ai-check AGENT_ID    # Check messages
 - **For coordination**: Send messages to notify other agents about breaking changes
 - **For questions**: Query other agents for information about their work areas
 - **After completing work**: Notify relevant agents about completed changes
+
+### Task Management
+
+```bash
+ai-task-create --title "Task" --priority high --depends-on ID1,ID2
+ai-task-list --available         # Claimable tasks only
+ai-task-claim TASK_ID --agent AGENT_ID
+ai-task-complete TASK_ID --result "Summary"
+ai-task-update TASK_ID --priority high
+```
+
+### Team Management
+
+```bash
+ai-team-create --name "team-name" --lead AGENT_ID
+ai-team-list                     # All teams
+ai-team-join TEAM_ID --agent AGENT_ID
+ai-team-leave TEAM_ID --agent AGENT_ID
+```
+
+### Plan Approval
+
+```bash
+ai-plan-submit --title "Plan" --file plan.md --reviewer AGENT_ID
+ai-plan-review PLAN_ID --action approve
+ai-plan-review PLAN_ID --action reject --feedback "Needs tests"
+```
+
+### Delegate Mode
+
+Register with a role to indicate coordination-only behavior:
+
+```bash
+ai-register --name "lead" --command "coordinating" --role delegate
+```
+
+Roles: `worker` (default), `lead`, `delegate`. Delegate agents focus on coordination rather than code changes.
 
 ### Heartbeat System
 

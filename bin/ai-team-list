@@ -1,0 +1,102 @@
+#!/bin/bash
+# ai-team-list - List teams
+# Usage: ai-team-list [OPTIONS]
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+TEAMS_DIR="${TEAM_AI_DIR}/teams"
+
+show_help() {
+    cat << EOF
+Usage: ai-team-list [OPTIONS]
+
+List all teams.
+
+Options:
+  --agent AGENT_ID        Show only teams this agent belongs to
+  -j, --json              JSON output
+  -h, --help              Show this help message
+
+Example:
+  ai-team-list
+  ai-team-list --agent abc123
+EOF
+}
+
+AGENT_FILTER=""
+JSON_OUTPUT=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --agent)
+            AGENT_FILTER="$2"
+            shift 2
+            ;;
+        -j|--json)
+            JSON_OUTPUT=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ ! -d "${TEAMS_DIR}" ]; then
+    if [ "${JSON_OUTPUT}" = true ]; then
+        echo "[]"
+    else
+        echo "No teams found"
+    fi
+    exit 0
+fi
+
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json, os, sys
+
+teams_dir = '${TEAMS_DIR}'
+agent_filter = '${AGENT_FILTER}'
+json_output = '${JSON_OUTPUT}' == 'true'
+
+teams = []
+if os.path.isdir(teams_dir):
+    for team_id in sorted(os.listdir(teams_dir)):
+        config_path = os.path.join(teams_dir, team_id, 'config.json')
+        if os.path.isfile(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                if agent_filter and agent_filter not in config.get('members', []):
+                    continue
+                teams.append(config)
+            except (json.JSONDecodeError, IOError):
+                continue
+
+if json_output:
+    print(json.dumps(teams, indent=2))
+else:
+    if not teams:
+        print("No teams found")
+        sys.exit(0)
+
+    print(f"{'ID':38s} {'NAME':20s} {'LEAD':12s} {'MEMBERS':8s} {'DESCRIPTION'}")
+    print('-' * 100)
+    for team in teams:
+        tid = team.get('id', '')[:36]
+        name = team.get('name', '')[:18]
+        lead = (team.get('lead') or '-')[:10]
+        members = str(len(team.get('members', [])))
+        desc = (team.get('description') or '')[:30]
+        print(f"{tid:38s} {name:20s} {lead:12s} {members:8s} {desc}")
+PYTHON
+else
+    echo "No teams found (python3 required for listing)"
+fi

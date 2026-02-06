@@ -1,0 +1,164 @@
+#!/bin/bash
+# ai-task-claim - Claim a task from the shared task list
+# Usage: ai-task-claim TASK_ID --agent AGENT_ID
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+TASKS_DIR="${TEAM_AI_DIR}/tasks"
+
+# Get ISO 8601 timestamp
+get_timestamp() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+show_help() {
+    cat << EOF
+Usage: ai-task-claim TASK_ID [OPTIONS]
+
+Claim a pending task. Uses file locking to prevent race conditions.
+Validates that all dependencies are completed before allowing claim.
+
+Arguments:
+  TASK_ID               The ID of the task to claim
+
+Options:
+  --agent AGENT_ID      The claiming agent's ID (required)
+  -h, --help            Show this help message
+
+Example:
+  ai-task-claim abc123 --agent def456
+EOF
+}
+
+# Parse arguments
+TASK_ID=""
+AGENT_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --agent)
+            AGENT_ID="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+        *)
+            TASK_ID="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ -z "${TASK_ID}" ]; then
+    echo "Error: TASK_ID is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+if [ -z "${AGENT_ID}" ]; then
+    echo "Error: --agent is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+TASK_FILE="${TASKS_DIR}/${TASK_ID}.json"
+
+if [ ! -f "${TASK_FILE}" ]; then
+    echo "Error: Task not found: ${TASK_ID}" >&2
+    exit 1
+fi
+
+# Verify agent exists
+if [ ! -d "${TEAM_AI_DIR}/agents/${AGENT_ID}" ]; then
+    echo "Error: Agent not found: ${AGENT_ID}" >&2
+    exit 1
+fi
+
+# Acquire lock for this task
+LOCK_DIR="${TASKS_DIR}/.${TASK_ID}.claim.lock"
+
+acquire_lock() {
+    local max_attempts=50
+    local attempt=0
+    while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
+        attempt=$((attempt + 1))
+        if [ ${attempt} -ge ${max_attempts} ]; then
+            echo "Error: Could not acquire lock on task ${TASK_ID}" >&2
+            exit 1
+        fi
+        sleep 0.1
+    done
+}
+
+release_lock() {
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+
+trap release_lock EXIT
+
+acquire_lock
+
+# Inside the lock: validate and claim
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json, sys
+
+task_file = '${TASK_FILE}'
+tasks_dir = '${TASKS_DIR}'
+agent_id = '${AGENT_ID}'
+
+with open(task_file, 'r') as f:
+    task = json.load(f)
+
+# Check status
+if task['status'] != 'pending':
+    print(f"Error: Task is '{task['status']}', not 'pending'. Cannot claim.", file=sys.stderr)
+    sys.exit(1)
+
+# Validate dependencies
+for dep_id in task.get('depends_on', []):
+    dep_path = f'{tasks_dir}/{dep_id}.json'
+    try:
+        with open(dep_path, 'r') as f:
+            dep = json.load(f)
+        if dep['status'] != 'completed':
+            print(f"Error: Dependency '{dep_id}' is '{dep['status']}', not completed.", file=sys.stderr)
+            sys.exit(1)
+    except FileNotFoundError:
+        print(f"Error: Dependency task not found: {dep_id}", file=sys.stderr)
+        sys.exit(1)
+
+# Claim the task
+task['status'] = 'in_progress'
+task['assignee'] = agent_id
+task['claimed_at'] = '$(get_timestamp)'
+
+with open(task_file, 'w') as f:
+    json.dump(task, f, indent=2)
+
+print(f"Task claimed: {task['title']}")
+print(f"Assignee: {agent_id}")
+PYTHON
+else
+    # Bash fallback
+    status=$(grep -o '"status": "[^"]*"' "${TASK_FILE}" | head -1 | cut -d'"' -f4)
+    if [ "${status}" != "pending" ]; then
+        echo "Error: Task is '${status}', not 'pending'. Cannot claim." >&2
+        exit 1
+    fi
+    TIMESTAMP=$(get_timestamp)
+    TMP_FILE=$(mktemp)
+    sed "s/\"status\": \"pending\"/\"status\": \"in_progress\"/" "${TASK_FILE}" | \
+    sed "s/\"assignee\": null/\"assignee\": \"${AGENT_ID}\"/" | \
+    sed "s/\"claimed_at\": null/\"claimed_at\": \"${TIMESTAMP}\"/" > "${TMP_FILE}"
+    mv "${TMP_FILE}" "${TASK_FILE}"
+    echo "Task claimed by ${AGENT_ID}"
+fi

@@ -1,0 +1,229 @@
+#!/bin/bash
+# ai-task-create - Create a new task in the shared task list
+# Usage: ai-task-create --title "Task title" [OPTIONS]
+
+set -e
+
+TEAM_AI_DIR="${HOME}/.team-ai"
+TASKS_DIR="${TEAM_AI_DIR}/tasks"
+
+# Generate UUID
+generate_uuid() {
+    if command -v uuidgen &> /dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    elif [ -f /proc/sys/kernel/random/uuid ]; then
+        cat /proc/sys/kernel/random/uuid
+    else
+        date +%s%N | sha256sum | head -c 32
+        echo ""
+    fi
+}
+
+# Get ISO 8601 timestamp
+get_timestamp() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+show_help() {
+    cat << EOF
+Usage: ai-task-create [OPTIONS]
+
+Create a new task in the shared task list.
+
+Options:
+  --title TITLE           Task title (required)
+  --description DESC      Task description
+  --depends-on IDS        Comma-separated task IDs this depends on
+  --created-by AGENT_ID   Creating agent's ID
+  --tags TAGS             Comma-separated tags
+  --priority PRIORITY     low|normal|high (default: normal)
+  --team TEAM_ID          Team ID to associate with
+  -h, --help              Show this help message
+
+Output:
+  Prints the new task ID to stdout on success.
+
+Example:
+  TASK_ID=\$(ai-task-create --title "Implement auth" --priority high)
+  echo "Created task: \$TASK_ID"
+EOF
+}
+
+# Parse arguments
+TITLE=""
+DESCRIPTION=""
+DEPENDS_ON=""
+CREATED_BY=""
+TAGS=""
+PRIORITY="normal"
+TEAM_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --title)
+            TITLE="$2"
+            shift 2
+            ;;
+        --description)
+            DESCRIPTION="$2"
+            shift 2
+            ;;
+        --depends-on)
+            DEPENDS_ON="$2"
+            shift 2
+            ;;
+        --created-by)
+            CREATED_BY="$2"
+            shift 2
+            ;;
+        --tags)
+            TAGS="$2"
+            shift 2
+            ;;
+        --priority)
+            PRIORITY="$2"
+            shift 2
+            ;;
+        --team)
+            TEAM_ID="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_help >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [ -z "${TITLE}" ]; then
+    echo "Error: --title is required" >&2
+    show_help >&2
+    exit 1
+fi
+
+# Validate priority
+case "${PRIORITY}" in
+    low|normal|high) ;;
+    *)
+        echo "Error: Invalid priority '${PRIORITY}'. Must be low, normal, or high." >&2
+        exit 1
+        ;;
+esac
+
+# Ensure tasks directory exists
+mkdir -p "${TASKS_DIR}"
+
+# Validate depends_on task IDs exist
+if [ -n "${DEPENDS_ON}" ]; then
+    IFS=',' read -ra DEP_IDS <<< "${DEPENDS_ON}"
+    for dep_id in "${DEP_IDS[@]}"; do
+        dep_id=$(echo "${dep_id}" | xargs)  # trim whitespace
+        if [ ! -f "${TASKS_DIR}/${dep_id}.json" ]; then
+            echo "Error: Dependency task not found: ${dep_id}" >&2
+            exit 1
+        fi
+    done
+fi
+
+# Validate team exists if specified
+if [ -n "${TEAM_ID}" ]; then
+    if [ ! -f "${TEAM_AI_DIR}/teams/${TEAM_ID}/config.json" ]; then
+        echo "Error: Team not found: ${TEAM_ID}" >&2
+        exit 1
+    fi
+fi
+
+TASK_ID=$(generate_uuid)
+TIMESTAMP=$(get_timestamp)
+
+# Build task JSON using python3
+if command -v python3 &> /dev/null; then
+    python3 << PYTHON
+import json, sys
+
+depends_on = [d.strip() for d in '${DEPENDS_ON}'.split(',') if d.strip()] if '${DEPENDS_ON}' else []
+tags = [t.strip() for t in '${TAGS}'.split(',') if t.strip()] if '${TAGS}' else []
+
+# Cycle detection
+if depends_on:
+    tasks_dir = '${TASKS_DIR}'
+    visited = set()
+    stack = list(depends_on)
+    while stack:
+        current = stack.pop()
+        if current == '${TASK_ID}':
+            print("Error: Circular dependency detected", file=sys.stderr)
+            sys.exit(1)
+        if current in visited:
+            continue
+        visited.add(current)
+        try:
+            with open(f'{tasks_dir}/{current}.json', 'r') as f:
+                t = json.load(f)
+                stack.extend(t.get('depends_on', []))
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
+task = {
+    "id": "${TASK_ID}",
+    "title": """${TITLE}""",
+    "description": """${DESCRIPTION}""",
+    "status": "pending",
+    "assignee": None,
+    "depends_on": depends_on,
+    "created_by": "${CREATED_BY}" if "${CREATED_BY}" else None,
+    "created_at": "${TIMESTAMP}",
+    "claimed_at": None,
+    "completed_at": None,
+    "team_id": "${TEAM_ID}" if "${TEAM_ID}" else None,
+    "tags": tags,
+    "priority": "${PRIORITY}",
+    "result": None
+}
+
+with open('${TASKS_DIR}/${TASK_ID}.json', 'w') as f:
+    json.dump(task, f, indent=2)
+PYTHON
+else
+    # Bash fallback
+    DEPENDS_JSON="[]"
+    if [ -n "${DEPENDS_ON}" ]; then
+        DEPENDS_JSON="[$(echo "${DEPENDS_ON}" | sed 's/,/","/g' | sed 's/^/"/;s/$/"/')]"
+    fi
+    TAGS_JSON="[]"
+    if [ -n "${TAGS}" ]; then
+        TAGS_JSON="[$(echo "${TAGS}" | sed 's/,/","/g' | sed 's/^/"/;s/$/"/')]"
+    fi
+
+    CREATED_BY_JSON="null"
+    [ -n "${CREATED_BY}" ] && CREATED_BY_JSON="\"${CREATED_BY}\""
+    TEAM_ID_JSON="null"
+    [ -n "${TEAM_ID}" ] && TEAM_ID_JSON="\"${TEAM_ID}\""
+
+    cat > "${TASKS_DIR}/${TASK_ID}.json" << EOF
+{
+  "id": "${TASK_ID}",
+  "title": "${TITLE}",
+  "description": "${DESCRIPTION}",
+  "status": "pending",
+  "assignee": null,
+  "depends_on": ${DEPENDS_JSON},
+  "created_by": ${CREATED_BY_JSON},
+  "created_at": "${TIMESTAMP}",
+  "claimed_at": null,
+  "completed_at": null,
+  "team_id": ${TEAM_ID_JSON},
+  "tags": ${TAGS_JSON},
+  "priority": "${PRIORITY}",
+  "result": null
+}
+EOF
+fi
+
+echo "${TASK_ID}"

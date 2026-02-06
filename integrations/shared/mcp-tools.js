@@ -88,6 +88,12 @@ export function getToolDefinitions(clientType = "client") {
             description:
               "Comma-separated capabilities (e.g., 'typescript,css')",
           },
+          role: {
+            type: "string",
+            enum: ["worker", "lead", "delegate"],
+            description: "Agent role (default: worker). Delegate = coordination-only.",
+            default: "worker",
+          },
         },
         required: ["name", "command"],
       },
@@ -234,6 +240,169 @@ export function getToolDefinitions(clientType = "client") {
         required: ["agentId"],
       },
     },
+    // Task management tools
+    {
+      name: "team-ai-task-create",
+      description: "Create a new task in the shared task list with optional dependencies.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Task title" },
+          description: { type: "string", description: "Task description" },
+          dependsOn: { type: "string", description: "Comma-separated task IDs this depends on" },
+          createdBy: { type: "string", description: "Creating agent's ID" },
+          tags: { type: "string", description: "Comma-separated tags" },
+          priority: { type: "string", enum: ["low", "normal", "high"], description: "Task priority", default: "normal" },
+          team: { type: "string", description: "Team ID to associate with" },
+        },
+        required: ["title"],
+      },
+    },
+    {
+      name: "team-ai-task-list",
+      description: "List tasks. Use --available to see only claimable tasks (pending with all deps met).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["pending", "in_progress", "completed", "blocked"], description: "Filter by status" },
+          assignee: { type: "string", description: "Filter by assignee agent ID" },
+          available: { type: "boolean", description: "Show only claimable tasks", default: false },
+          team: { type: "string", description: "Filter by team ID" },
+          tag: { type: "string", description: "Filter by tag" },
+        },
+      },
+    },
+    {
+      name: "team-ai-task-claim",
+      description: "Claim a pending task. Validates dependencies are met and uses file locking.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskId: { type: "string", description: "Task ID to claim" },
+          agentId: { type: "string", description: "Claiming agent's ID" },
+        },
+        required: ["taskId", "agentId"],
+      },
+    },
+    {
+      name: "team-ai-task-complete",
+      description: "Mark an in-progress task as completed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskId: { type: "string", description: "Task ID to complete" },
+          result: { type: "string", description: "Completion result/summary" },
+        },
+        required: ["taskId"],
+      },
+    },
+    {
+      name: "team-ai-task-update",
+      description: "Update fields on an existing task.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskId: { type: "string", description: "Task ID to update" },
+          title: { type: "string", description: "New title" },
+          description: { type: "string", description: "New description" },
+          status: { type: "string", description: "New status" },
+          assignee: { type: "string", description: "New assignee (use 'none' to unassign)" },
+          priority: { type: "string", description: "New priority" },
+          addDep: { type: "string", description: "Task ID to add as dependency" },
+          removeDep: { type: "string", description: "Task ID to remove from dependencies" },
+          team: { type: "string", description: "Team ID (use 'none' to unset)" },
+        },
+        required: ["taskId"],
+      },
+    },
+    // Team management tools
+    {
+      name: "team-ai-team-create",
+      description: "Create a new team for coordinating agents.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Team name" },
+          lead: { type: "string", description: "Lead agent ID" },
+          description: { type: "string", description: "Team description" },
+        },
+        required: ["name", "lead"],
+      },
+    },
+    {
+      name: "team-ai-team-list",
+      description: "List all teams, optionally filtered by agent membership.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string", description: "Filter by agent membership" },
+        },
+      },
+    },
+    {
+      name: "team-ai-team-join",
+      description: "Join an existing team.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          teamId: { type: "string", description: "Team ID to join" },
+          agentId: { type: "string", description: "Agent ID joining" },
+        },
+        required: ["teamId", "agentId"],
+      },
+    },
+    {
+      name: "team-ai-team-leave",
+      description: "Leave a team.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          teamId: { type: "string", description: "Team ID to leave" },
+          agentId: { type: "string", description: "Agent ID leaving" },
+        },
+        required: ["teamId", "agentId"],
+      },
+    },
+    // Plan approval tools
+    {
+      name: "team-ai-plan-submit",
+      description: "Submit a plan for approval by another agent.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Plan title" },
+          body: { type: "string", description: "Plan content (Markdown)" },
+          reviewer: { type: "string", description: "Reviewer agent ID" },
+          fromAgent: { type: "string", description: "Submitting agent ID" },
+          team: { type: "string", description: "Associated team ID" },
+        },
+        required: ["title", "body", "reviewer"],
+      },
+    },
+    {
+      name: "team-ai-plan-review",
+      description: "Approve or reject a submitted plan.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          planId: { type: "string", description: "Plan ID to review" },
+          action: { type: "string", enum: ["approve", "reject"], description: "Approve or reject" },
+          feedback: { type: "string", description: "Review feedback" },
+        },
+        required: ["planId", "action"],
+      },
+    },
+    {
+      name: "team-ai-plan-list",
+      description: "List submitted plans, optionally filtered by status or reviewer.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["pending", "approved", "rejected"], description: "Filter by status" },
+          reviewer: { type: "string", description: "Filter by reviewer agent ID" },
+        },
+      },
+    },
   ];
 }
 
@@ -277,6 +446,7 @@ export function handleToolCall(name, args, modelName, registeredAgentId = null) 
         if (args.tags) cmdArgs.push("--tags", `"${args.tags}"`);
         if (args.capabilities)
           cmdArgs.push("--capabilities", `"${args.capabilities}"`);
+        if (args.role) cmdArgs.push("--role", args.role);
 
         const result = runCommand("ai-register", cmdArgs);
         if (result.success) {
@@ -524,6 +694,119 @@ export function handleToolCall(name, args, modelName, registeredAgentId = null) 
             },
           ],
         };
+      }
+
+      // Task management handlers
+      case "team-ai-task-create": {
+        const cmdArgs = ["--title", `"${args.title}"`];
+        if (args.description) cmdArgs.push("--description", `"${args.description}"`);
+        if (args.dependsOn) cmdArgs.push("--depends-on", args.dependsOn);
+        if (args.createdBy) cmdArgs.push("--created-by", args.createdBy);
+        if (args.tags) cmdArgs.push("--tags", args.tags);
+        if (args.priority) cmdArgs.push("--priority", args.priority);
+        if (args.team) cmdArgs.push("--team", args.team);
+        const result = runCommand("ai-task-create", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? `Task created: ${result.output}` : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-task-list": {
+        const cmdArgs = [];
+        if (args?.status) cmdArgs.push("--status", args.status);
+        if (args?.assignee) cmdArgs.push("--assignee", args.assignee);
+        if (args?.available) cmdArgs.push("--available");
+        if (args?.team) cmdArgs.push("--team", args.team);
+        if (args?.tag) cmdArgs.push("--tag", args.tag);
+        const result = runCommand("ai-task-list", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-task-claim": {
+        const result = runCommand("ai-task-claim", [args.taskId, "--agent", args.agentId]);
+        return { content: [{ type: "text", text: result.success ? result.output : `Claim failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-task-complete": {
+        const cmdArgs = [args.taskId];
+        if (args.result) cmdArgs.push("--result", `"${args.result}"`);
+        const result = runCommand("ai-task-complete", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-task-update": {
+        const cmdArgs = [args.taskId];
+        if (args.title) cmdArgs.push("--title", `"${args.title}"`);
+        if (args.description) cmdArgs.push("--description", `"${args.description}"`);
+        if (args.status) cmdArgs.push("--status", args.status);
+        if (args.assignee) cmdArgs.push("--assignee", args.assignee);
+        if (args.priority) cmdArgs.push("--priority", args.priority);
+        if (args.addDep) cmdArgs.push("--add-dep", args.addDep);
+        if (args.removeDep) cmdArgs.push("--remove-dep", args.removeDep);
+        if (args.team) cmdArgs.push("--team", args.team);
+        const result = runCommand("ai-task-update", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      // Team management handlers
+      case "team-ai-team-create": {
+        const cmdArgs = ["--name", `"${args.name}"`, "--lead", args.lead];
+        if (args.description) cmdArgs.push("--description", `"${args.description}"`);
+        const result = runCommand("ai-team-create", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? `Team created: ${result.output}` : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-team-list": {
+        const cmdArgs = [];
+        if (args?.agentId) cmdArgs.push("--agent", args.agentId);
+        const result = runCommand("ai-team-list", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-team-join": {
+        const result = runCommand("ai-team-join", [args.teamId, "--agent", args.agentId]);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-team-leave": {
+        const result = runCommand("ai-team-leave", [args.teamId, "--agent", args.agentId]);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      // Plan approval handlers
+      case "team-ai-plan-submit": {
+        const cmdArgs = ["--title", `"${args.title}"`, "--body", `"${args.body}"`, "--reviewer", args.reviewer];
+        if (args.fromAgent) cmdArgs.push("--from", args.fromAgent);
+        if (args.team) cmdArgs.push("--team", args.team);
+        const result = runCommand("ai-plan-submit", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? `Plan submitted: ${result.output}` : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-plan-review": {
+        const cmdArgs = [args.planId, "--action", args.action];
+        if (args.feedback) cmdArgs.push("--feedback", `"${args.feedback}"`);
+        const result = runCommand("ai-plan-review", cmdArgs);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error}\n${result.output}` }] };
+      }
+
+      case "team-ai-plan-list": {
+        const plansDir = join(TEAM_AI_DIR, "plans");
+        if (!existsSync(plansDir)) {
+          return { content: [{ type: "text", text: "No plans found" }] };
+        }
+        const plans = [];
+        for (const file of readdirSync(plansDir)) {
+          if (!file.endsWith(".json")) continue;
+          try {
+            const plan = JSON.parse(readFileSync(join(plansDir, file), "utf-8"));
+            if (args?.status && plan.status !== args.status) continue;
+            if (args?.reviewer && plan.reviewer !== args.reviewer) continue;
+            plans.push(plan);
+          } catch (e) { /* skip */ }
+        }
+        if (plans.length === 0) {
+          return { content: [{ type: "text", text: "No plans match the criteria" }] };
+        }
+        const output = plans.map(p => `- [${p.status.toUpperCase()}] ${p.title} (${p.id.substring(0, 8)}) reviewer: ${(p.reviewer || '-').substring(0, 8)}`).join("\n");
+        return { content: [{ type: "text", text: `Plans:\n${output}` }] };
       }
 
       default:

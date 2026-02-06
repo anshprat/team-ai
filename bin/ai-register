@@ -16,6 +16,7 @@ AGENT_CAPABILITIES=""
 AGENT_MODEL=""
 AGENT_SESSION_ID=""
 AGENT_PARENT=""
+AGENT_ROLE="worker"
 
 # Generate UUID (works on macOS and Linux)
 generate_uuid() {
@@ -55,6 +56,7 @@ Options:
   --model MODEL             AI model being used (e.g., "claude-opus-4-5")
   --session-id ID           Claude Code session ID
   --parent AGENT_ID         Parent agent ID (for hierarchies)
+  --role ROLE               Agent role: worker|lead|delegate (default: worker)
   -h, --help                Show this help message
 
 Output:
@@ -99,6 +101,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --parent)
             AGENT_PARENT="$2"
+            shift 2
+            ;;
+        --role)
+            AGENT_ROLE="$2"
             shift 2
             ;;
         -h|--help)
@@ -177,7 +183,8 @@ cat > "${AGENT_DIR}/metadata.json" << EOF
   "capabilities": ${CAPS_JSON},
   "model": "${AGENT_MODEL}",
   "session_id": "${AGENT_SESSION_ID}",
-  "parent_agent": "${AGENT_PARENT}"
+  "parent_agent": "${AGENT_PARENT}",
+  "role": "${AGENT_ROLE}"
 }
 EOF
 

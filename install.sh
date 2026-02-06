@@ -58,9 +58,12 @@ print_section "Installing core components"
 # Create main directory structure
 mkdir -p "${TEAM_AI_DIR}/agents"
 mkdir -p "${TEAM_AI_DIR}/artifacts"
+mkdir -p "${TEAM_AI_DIR}/tasks"
+mkdir -p "${TEAM_AI_DIR}/teams"
+mkdir -p "${TEAM_AI_DIR}/plans"
 mkdir -p "${TEAM_AI_BIN}"
 print_success "Created directory structure at ${TEAM_AI_DIR}"
-print_success "Created artifacts directory at ${TEAM_AI_DIR}/artifacts"
+print_success "Created artifacts, tasks, teams, plans directories"
 
 # Initialize registry.json if it doesn't exist
 if [ ! -f "${TEAM_AI_DIR}/registry.json" ]; then
